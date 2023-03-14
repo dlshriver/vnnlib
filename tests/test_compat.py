@@ -1,6 +1,6 @@
 import pytest
 
-from vnnlib.compat import read_vnnlib_simple, CompatTransformer
+from vnnlib.compat import CompatTransformer, read_vnnlib_simple
 from vnnlib.parser import parse_file
 
 

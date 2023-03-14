@@ -1,10 +1,10 @@
 from vnnlib.parser import (
-    parse_file,
-    Script,
-    DeclareConst,
     Assert,
-    FunctionApplication,
     Constant,
+    DeclareConst,
+    FunctionApplication,
+    Script,
+    parse_file,
 )
 
 
