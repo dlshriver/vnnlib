@@ -53,7 +53,7 @@ def tokenize(text: str, skip: Set[str], strict=True) -> Iterator[Token]:
         "BINARY": r"#b[01]+",
         "HEXADECIMAL": r"#x[0-9A-Fa-f]+",
         "_DECIMAL_strict": r"(?:{NUMERAL})\.0*(?:{NUMERAL})",
-        "_DECIMAL_extended": r"(?:(?:{NUMERAL})\.0*(?:{NUMERAL})(?:[eE][+-]?0*(?:{NUMERAL}))?)",
+        "_DECIMAL_extended": r"(?:(?:{NUMERAL})\.[0-9]+(?:[eE][+-]?[0-9]+)?)|(?:(?:{NUMERAL})[eE][+-]?[0-9]+)",
         "DECIMAL": f"(?:{{_DECIMAL_{'strict' if strict else 'extended'}}})",
         "NUMERAL": r"(?:(?:[1-9][0-9]*)|0)",
         "STRING": r"\x22(?:(?:{WS})|(?:{_PRINTABLE_CHAR}))*\x22",
@@ -147,8 +147,8 @@ def _bin_to_int(x: str) -> int:
     return int(x[2:], 2)
 
 
-def _identity(x: str) -> str:
-    return x
+def _string_to_str(x: str) -> str:
+    return x[1:-1]
 
 
 LITERAL_CONVERTERS: Dict[str, Callable[[str], float | int | str | Real]] = {
@@ -156,7 +156,7 @@ LITERAL_CONVERTERS: Dict[str, Callable[[str], float | int | str | Real]] = {
     "NUMERAL": int,
     "HEXADECIMAL": _hex_to_int,
     "BINARY": _bin_to_int,
-    "STRING": _identity,
+    "STRING": _string_to_str,
 }
 CORE_IDS: Dict[str, Identifier] = {
     # arithmetic
@@ -195,15 +195,18 @@ class VnnLibParser:
 
     def expect_token_type(
         self,
-        type: str,
+        token_type: str,
         *,
         expected_value: Optional[str] = None,
-        msg: str = "unexpected token: {token_type}({value!r})",
+        msg: str = "Unexpected token: {token_type}({value!r})",
     ) -> bool:
-        if self.curr_token.token_type == type:
+        if self.curr_token.token_type == token_type:
             return True
         if expected_value:
-            raise ParserError(f"Expected {expected_value!r}")
+            raise ParserError(
+                f"Unexpected token: {self.curr_token.value!r}"
+                f", expected {expected_value!r}"
+            )
         raise ParserError(msg.format(**as_dict(self.curr_token)))
 
     def lookup_identifier(self, identifier: str) -> Identifier:
@@ -215,17 +218,17 @@ class VnnLibParser:
             ):
                 raise ParserError(
                     (
-                        f"undeclared identifier: {identifier!r}."
+                        f"Undeclared identifier: {identifier!r}."
                         "\n\tIt looks like this may be exponential notation, which is not SMT-LIB compliant."
                         "\n\tTry turning of strict mode."
                     )
                 )
-            raise ParserError(f"undeclared identifier: {identifier!r}")
+            raise ParserError(f"Undeclared identifier: {identifier!r}")
         return self.identifiers[identifier]
 
     def lookup_sort(self, name: str) -> Sort:
         if name not in self.sorts:
-            raise ParserError(f"undeclared sort: {name!r}")
+            raise ParserError(f"Undeclared sort: {name!r}")
         return self.sorts[name]
 
     @classmethod
@@ -238,7 +241,7 @@ class VnnLibParser:
         return Script(*commands)
 
     def parse_command(self) -> Command:
-        self.expect_token_type(type="LPAREN", expected_value="(")
+        self.expect_token_type(token_type="LPAREN", expected_value="(")
         curr_token = self.advance_token_stream()
         command = curr_token.value
         command_parsers = {
@@ -248,7 +251,7 @@ class VnnLibParser:
         if command not in command_parsers:
             raise ParserError(f"Unknown command: {command!r}")
         node = command_parsers[command]()
-        self.expect_token_type(type="RPAREN", expected_value=")")
+        self.expect_token_type(token_type="RPAREN", expected_value=")")
         self.advance_token_stream()
         return node
 
@@ -277,12 +280,11 @@ class VnnLibParser:
                 try:
                     float_value = Real(curr_token.value)
                     return Constant(float_value)
-                except:
-                    pass
-                return FunctionApplication(
-                    self.lookup_identifier("-"),
-                    self.lookup_identifier(curr_token.value[1:]),
-                )
+                except ValueError:
+                    return FunctionApplication(
+                        self.lookup_identifier("-"),
+                        self.lookup_identifier(curr_token.value[1:]),
+                    )
             return self.lookup_identifier(curr_token.value)
         if token_type == "LPAREN":
             children: List[Term] = []
@@ -303,10 +305,6 @@ class VnnLibParser:
         raise ParserError(f"Unexpected token: {curr_token}")
 
 
-def _identity_args(*args):
-    return args
-
-
 class _Discard:
     pass
 
@@ -317,7 +315,7 @@ Discard = _Discard()
 class AstNodeTransformer:
     def transform(self, node: AstNode):
         args = getattr(self, f"_visit_{node._type}")(node)
-        return getattr(self, f"transform_{node._type}", _identity_args)(*args)
+        return getattr(self, f"transform_{node._type}", lambda *args: args)(*args)
 
     def _visit_Assert(self, node: Assert):
         result = self.transform(node.term)

@@ -42,19 +42,24 @@ class CompatTransformer(AstNodeTransformer):
                 for (row, *index), value in term[0].items():
                     self._assertions[(row + row_offset, *index)] = value
                     max_row = max(max_row, row)
-                if len(term[0]):
-                    self._num_assertions += max_row + 1
+                self._num_assertions += max_row + (1 if len(term[0]) else 0)
             elif len(self._disjunctions) == 1:
+                assert len(self._disjunctions[0]) == 0, "please open a bug report"
                 new_disjunctions = []
                 for disjunct in term:
-                    disjunct = disjunct.copy()
-                    new_disjunctions.append(disjunct)
-                    row_offset = max(disjunct, default=(-1,))[0] + 1
-                    for (row, *index), value in self._disjunctions[0].items():
-                        disjunct[(row + row_offset, *index)] = value
+                    new_disjunct = disjunct.copy()
+                    new_disjunctions.append(new_disjunct)
                 self._disjunctions = new_disjunctions
             else:
-                assert False
+                new_disjunctions = []
+                for disjunct in term:
+                    row_offset = max(disjunct, default=(-1,))[0] + 1
+                    for _disjunct in self._disjunctions:
+                        new_disjunct = disjunct.copy()
+                        new_disjunctions.append(new_disjunct)
+                        for (row, *index), value in _disjunct.items():
+                            new_disjunct[(row + row_offset, *index)] = value
+                self._disjunctions = new_disjunctions
             return term
         if isinstance(term, dict):
             row_offset = self._num_assertions
@@ -62,8 +67,7 @@ class CompatTransformer(AstNodeTransformer):
             for (row, *index), value in term.items():
                 self._assertions[(row + row_offset, *index)] = value
                 max_row = max(max_row, row)
-            if len(term):
-                self._num_assertions += max_row + 1
+            self._num_assertions += max_row + (1 if len(term) else 0)
             return [term]
         raise RuntimeError("unexpected term for assert")
 
@@ -112,6 +116,8 @@ class CompatTransformer(AstNodeTransformer):
         elif symbol == "or":
             or_result = []
             for term in terms:
+                if isinstance(term, dict):
+                    term = [term]
                 assert isinstance(term, list), "please open a bug report"
                 for subterm in term:
                     assert isinstance(subterm, dict), "please open a bug report"
@@ -135,7 +141,7 @@ class CompatTransformer(AstNodeTransformer):
             return value
         if value not in self._id_map:
             self._id_map[value] = len(self._id_map) + 2
-        return {(0, self._id_map[value]): 1}
+        return {(0, self._id_map[value], 0): 1}
 
     def transform_Script(self, *commands):
         common_box = [[float("-inf"), float("inf")] for _ in range(self.input_size)]
@@ -146,7 +152,7 @@ class CompatTransformer(AstNodeTransformer):
         for (row, var_type, index), value in sorted(
             self._assertions.items(), key=operator.itemgetter(0)
         ):
-            assert var_type <= 0 or row not in input_box_rows
+            assert var_type != 1 or row not in input_box_rows
             if var_type == -1:
                 rhs = value
                 continue
@@ -176,12 +182,12 @@ class CompatTransformer(AstNodeTransformer):
             box = [interval.copy() for interval in common_box]
             polytope = [[lhs.copy(), rhs.copy()] for lhs, rhs in common_polytope]
             input_box_rows = set()
-            output_polytope_rows = set()
+            output_polytope_rows = {}
             rhs = 0
             for (row, var_type, index), value in sorted(
                 disjunct.items(), key=lambda kv: kv[0]
             ):
-                assert var_type <= 0 or row not in input_box_rows
+                assert var_type != 1 or row not in input_box_rows
                 if var_type == -1:
                     rhs = value
                     continue
@@ -196,10 +202,9 @@ class CompatTransformer(AstNodeTransformer):
                     rhs = 0
                     continue
                 if var_type == 1:
-                    output_polytope_rows.add(row)
-                    polytope_row = (
-                        row - min(output_polytope_rows) + len(common_polytope)
-                    )
+                    if row not in output_polytope_rows:
+                        output_polytope_rows[row] = len(output_polytope_rows)
+                    polytope_row = output_polytope_rows[row]
                     if len(polytope) <= polytope_row:
                         polytope.append([[0 for _ in range(self.output_size)], [rhs]])
                         rhs = 0
