@@ -54,6 +54,7 @@ branch = true
 command_line = "-m pytest"
 parallel = true
 source = ["vnnlib"]
+omit = ["vnnlib/__main__.py"]
 
 [tool.isort]
 profile = "black"
