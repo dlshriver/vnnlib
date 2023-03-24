@@ -8,6 +8,16 @@ from vnnlib.parser import (
 )
 
 
+def test_parse_string_path(tmp_path):
+    vnnlib_path = tmp_path / "test.vnnlib"
+    with open(vnnlib_path, "w+"):
+        pass
+
+    result = parse_file(str(vnnlib_path))
+    assert isinstance(result, Script)
+    assert len(result.commands) == 0
+
+
 def test_empty(tmp_path):
     vnnlib_path = tmp_path / "test.vnnlib"
     with open(vnnlib_path, "w+"):

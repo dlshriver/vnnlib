@@ -3,91 +3,18 @@ from __future__ import annotations
 import bz2
 import gzip
 import lzma
-import re
 import warnings
 from pathlib import Path
-from typing import (
-    Callable,
-    Dict,
-    Iterator,
-    List,
-    NamedTuple,
-    Optional,
-    Set,
-    TextIO,
-    Union,
-)
+from typing import Callable, Dict, Iterator, List, Optional, TextIO, Union
 
 from .errors import ParserError
+from .tokenizer import DUMMY_TOKEN, EOF, Token, tokenize
 
 Real = float
 
 
-class Meta(NamedTuple):
-    start_pos: int
-    end_pos: int
-
-
-class Token(NamedTuple):
-    token_type: str
-    value: str
-    meta: Meta
-
-
-def as_dict(t: NamedTuple):
-    return t._asdict()
-
-
-_DUMMY_TOKEN = Token("_", "", Meta(0, 0))
-EOF = Token("EOF", "", Meta(-1, -1))
-
-
-def tokenize(text: str, skip: Set[str], strict=True) -> Iterator[Token]:
-    if len(text) == 0:
-        return
-    tokens: Dict[str, str] = {
-        "COMMENT": r";[\t -~]*(?:[\r\n]|$)",
-        "WS": r"\x09|\x0a|\x0d|\x20",
-        "LPAREN": r"\(",
-        "RPAREN": r"\)",
-        "BINARY": r"#b[01]+",
-        "HEXADECIMAL": r"#x[0-9A-Fa-f]+",
-        "_DECIMAL_strict": r"(?:{NUMERAL})\.0*(?:{NUMERAL})",
-        "_DECIMAL_extended": r"(?:(?:{NUMERAL})\.[0-9]+(?:[eE][+-]?[0-9]+)?)|(?:(?:{NUMERAL})[eE][+-]?[0-9]+)",
-        "DECIMAL": f"(?:{{_DECIMAL_{'strict' if strict else 'extended'}}})",
-        "NUMERAL": r"(?:(?:[1-9][0-9]*)|0)",
-        "STRING": r"\x22(?:(?:{WS})|(?:{_PRINTABLE_CHAR}))*\x22",
-        "SYMBOL": r"(?:(?:(?:{_LETTER})|(?:{_CHARACTER}))(?:[0-9]|(?:{_LETTER})|(?:{_CHARACTER}))*)|(?:\x7c(?:[\x20-\x5b]|[\x5d-\x7b]|[\x7d\x7e]|[\x80-\xff])*\x7c)",
-        "_PRINTABLE_CHAR": r"[\x20-\x7e]|[\x80-\xff]",
-        "_LETTER": r"[A-Za-z]",
-        "_CHARACTER": r"[~!@$%^&*+=<>.?/_-]",
-    }
-    for key, value in tokens.items():
-        tokens[key] = value.format(**tokens)
-    token_pattern = re.compile(
-        "|".join(
-            f"(?P<{token_type}>{pattern})"
-            for token_type, pattern in tokens.items()
-            if not token_type.startswith("_")
-        )
-    )
-    pos: int = 0
-    for match in token_pattern.finditer(text):
-        start_pos, end_pos = match.span()
-        if start_pos != pos:
-            raise ParserError(f"Unknown string: {text[pos:start_pos]!r}")
-        assert match.lastgroup is not None
-        if match.lastgroup not in skip:
-            yield Token(match.lastgroup, match.group(), Meta(start_pos, end_pos))
-        pos = end_pos
-    if pos != len(text):
-        raise ParserError(f"Unknown string: {text[pos:]!r}")
-
-
 class AstNode:
-    @property
-    def _type(self) -> str:
-        return self.__class__.__name__
+    pass
 
 
 class Script(AstNode):
@@ -185,7 +112,7 @@ CORE_IDS: Dict[str, Identifier] = {
 class VnnLibParser:
     def __init__(self, token_stream: Iterator[Token]):
         self.token_stream = token_stream
-        self.curr_token = _DUMMY_TOKEN
+        self.curr_token = DUMMY_TOKEN
         self.sorts = {"Bool": Sort("Bool"), "Int": Sort("Int"), "Real": Sort("Real")}
         self.identifiers: Dict[str, Identifier] = CORE_IDS.copy()
 
@@ -207,7 +134,14 @@ class VnnLibParser:
                 f"Unexpected token: {self.curr_token.value!r}"
                 f", expected {expected_value!r}"
             )
-        raise ParserError(msg.format(**as_dict(self.curr_token)))
+        curr_token = self.curr_token
+        raise ParserError(
+            msg.format(
+                token_type=curr_token.token_type,
+                value=curr_token.value,
+                meta=curr_token.meta,
+            )
+        )
 
     def lookup_identifier(self, identifier: str) -> Identifier:
         if identifier not in self.identifiers:
@@ -303,45 +237,6 @@ class VnnLibParser:
             self.advance_token_stream()
             return Constant(value)
         raise ParserError(f"Unexpected token: {curr_token}")
-
-
-class _Discard:
-    pass
-
-
-Discard = _Discard()
-
-
-class AstNodeTransformer:
-    def transform(self, node: AstNode):
-        args = getattr(self, f"_visit_{node._type}")(node)
-        return getattr(self, f"transform_{node._type}", lambda *args: args)(*args)
-
-    def _visit_Assert(self, node: Assert):
-        result = self.transform(node.term)
-        return (result,)
-
-    def _visit_Constant(self, node: Constant):
-        return (node.value,)
-
-    def _visit_DeclareConst(self, node: DeclareConst):
-        return (node.symbol, node.sort)
-
-    def _visit_FunctionApplication(self, node: FunctionApplication):
-        function = self.transform(node.function)
-        terms = [self.transform(term) for term in node.terms]
-        return (function, *terms)
-
-    def _visit_Identifier(self, node: Identifier):
-        return (node.value,)
-
-    def _visit_Script(self, node: Script):
-        results = []
-        for command in node.commands:
-            result = self.transform(command)
-            if result is not Discard:
-                results.append(result)
-        return results
 
 
 def parse_file(filename: Union[str, Path], strict=True) -> AstNode:

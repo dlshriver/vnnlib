@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import operator
 import pathlib
+import re
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from .parser import AstNodeTransformer, Real, parse_file
+from .parser import Real, parse_file
+from .transformer import AstNodeTransformer
 
 
 class CompatTransformer(AstNodeTransformer):
@@ -17,6 +19,7 @@ class CompatTransformer(AstNodeTransformer):
         input_size: Optional[int] = None,
         output_size: Optional[int] = None,
     ) -> None:
+        super().__init__()
         self.input_name = input_name
         self.output_name = output_name
 
@@ -26,7 +29,9 @@ class CompatTransformer(AstNodeTransformer):
         self.infer_input_size = input_size is None
         self.infer_output_size = output_size is None
 
-        self._id_map: Dict[str, int] = {}
+        self._io_name_pattern = re.compile(f"{self.input_name}|{self.output_name}")
+        self._id_map: Dict[str, int] = {self.input_name: 0, self.output_name: 1}
+        self._id_cache: Dict[str, Dict[Tuple[int, ...], Real]] = {}
         self._assertions: Dict[Tuple[int, ...], Real] = {}
         self._num_assertions = 0
         self._disjunctions: List[Dict[Tuple[int, ...], Real]] = [{}]
@@ -82,6 +87,7 @@ class CompatTransformer(AstNodeTransformer):
         elif self.infer_output_size and symbol.startswith(f"{self.output_name}_"):
             _, index = symbol.split("_")
             self.output_size = max(self.output_size, int(index) + 1)
+        self._id_map[symbol] = len(self._id_map)
 
     def transform_FunctionApplication(
         self,
@@ -103,6 +109,45 @@ class CompatTransformer(AstNodeTransformer):
             result = rhs.copy()
             for key, value in lhs.items():
                 result[key] = result.get(key, 0) - value
+            return result
+        elif symbol == "+":
+            result = {}
+            for term in terms:
+                assert isinstance(term, dict)
+                for key, value in term.items():
+                    result[key] = result.get(key, 0) + value
+            return result
+        elif symbol == "-":
+            assert isinstance(terms[0], dict)
+            if len(terms) == 1:
+                return {key: -value for key, value in terms[0].items()}
+            else:
+                result = terms[0].copy()
+                for term in terms[1:]:
+                    assert isinstance(term, dict)
+                    for key, value in term.items():
+                        result[key] = result.get(key, 0) - value
+            return result
+        elif symbol == "*":
+            sorted_terms = tuple(
+                sorted(
+                    terms,
+                    key=lambda term: -sum(
+                        map(lambda x: x >= 0, map(operator.itemgetter(1), term))
+                    ),
+                )
+            )
+            assert isinstance(sorted_terms[0], dict)
+            result = sorted_terms[0].copy()
+            for term in sorted_terms[1:]:
+                assert isinstance(term, dict)
+                if len(term) > 1 or (0, -1, -1) not in term:
+                    raise NotImplementedError(
+                        "Nonlinear constraints are not supported by the legacy parser"
+                    )
+                const = term[(0, -1, -1)]
+                for key, value in result.items():
+                    result[key] = value * const
             return result
         elif symbol == "and":
             conjuncts = {}
@@ -131,17 +176,17 @@ class CompatTransformer(AstNodeTransformer):
     def transform_Identifier(
         self, value: str
     ) -> Union[str, Dict[Tuple[int, ...], Real]]:
-        if value.startswith(f"{self.input_name}_"):
-            _, *str_index = value.split("_")
-            return {(0, 0, *tuple(map(int, str_index))): 1}
-        elif value.startswith(f"{self.output_name}_"):
-            _, *str_index = value.split("_")
-            return {(0, 1, *tuple(map(int, str_index))): 1}
-        elif value in {"<=", ">=", "and", "or"}:
-            return value
         if value not in self._id_map:
-            self._id_map[value] = len(self._id_map) + 2
-        return {(0, self._id_map[value], 0): 1}
+            return value
+        if value not in self._id_cache:
+            if self._io_name_pattern.match(value):
+                name, *str_index = value.split("_")
+                self._id_cache[value] = {
+                    (0, self._id_map[name], *map(int, str_index)): 1
+                }
+            else:
+                self._id_cache[value] = {(0, self._id_map[value], 0): 1}
+        return self._id_cache[value]
 
     def transform_Script(self, *commands):
         common_box = [[float("-inf"), float("inf")] for _ in range(self.input_size)]
@@ -158,12 +203,10 @@ class CompatTransformer(AstNodeTransformer):
                 continue
             if var_type == 0:
                 input_box_rows.add(row)
-                if value == 1:
-                    common_box[index][1] = min(-rhs, common_box[index][1])
-                elif value == -1:
-                    common_box[index][0] = max(rhs, common_box[index][0])
-                else:
-                    raise RuntimeError(f"unexpected lhs coeff for box: {value}")
+                if value > 0:
+                    common_box[index][1] = min(-rhs / value, common_box[index][1])
+                elif value < 0:
+                    common_box[index][0] = max(-rhs / value, common_box[index][0])
                 rhs = 0
                 continue
             if var_type == 1:
@@ -171,7 +214,7 @@ class CompatTransformer(AstNodeTransformer):
                 polytope_row = row - min(output_polytope_rows)
                 if len(common_polytope) <= polytope_row:
                     common_polytope.append(
-                        [[0 for _ in range(self.output_size)], [rhs]]
+                        [[0 for _ in range(self.output_size)], [-rhs]]
                     )
                     rhs = 0
                 common_polytope[polytope_row][0][index] = value
@@ -185,7 +228,7 @@ class CompatTransformer(AstNodeTransformer):
             output_polytope_rows = {}
             rhs = 0
             for (row, var_type, index), value in sorted(
-                disjunct.items(), key=lambda kv: kv[0]
+                disjunct.items(), key=operator.itemgetter(0)
             ):
                 assert var_type != 1 or row not in input_box_rows
                 if var_type == -1:
@@ -193,12 +236,10 @@ class CompatTransformer(AstNodeTransformer):
                     continue
                 if var_type == 0:
                     input_box_rows.add(row)
-                    if value == 1:
-                        box[index][1] = min(-rhs, box[index][1])
-                    elif value == -1:
-                        box[index][0] = max(rhs, box[index][0])
-                    else:
-                        raise RuntimeError(f"unexpected lhs coeff for box: {value}")
+                    if value > 0:
+                        box[index][1] = min(-rhs / value, box[index][1])
+                    elif value < 0:
+                        box[index][0] = max(-rhs / value, box[index][0])
                     rhs = 0
                     continue
                 if var_type == 1:
@@ -206,7 +247,7 @@ class CompatTransformer(AstNodeTransformer):
                         output_polytope_rows[row] = len(output_polytope_rows)
                     polytope_row = output_polytope_rows[row]
                     if len(polytope) <= polytope_row:
-                        polytope.append([[0 for _ in range(self.output_size)], [rhs]])
+                        polytope.append([[0 for _ in range(self.output_size)], [-rhs]])
                         rhs = 0
                     polytope[polytope_row][0][index] = value
                     continue
