@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Final, Iterator, Set
+from typing import Dict, Iterator, Set
 
 from .errors import ParserError
 
@@ -19,8 +19,8 @@ class Token:
         self.meta = meta
 
 
-DUMMY_TOKEN: Final[Token] = Token("_", "", Meta(0, 0))
-EOF: Final[Token] = Token("EOF", "", Meta(-1, -1))
+DUMMY_TOKEN: Token = Token("_", "", Meta(0, 0))
+EOF: Token = Token("EOF", "", Meta(-1, -1))
 
 
 def tokenize(text: str, skip: Set[str], strict=True) -> Iterator[Token]:
