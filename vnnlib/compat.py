@@ -188,7 +188,9 @@ class CompatTransformer(AstNodeTransformer):
                 self._id_cache[value] = {(0, self._id_map[value], 0): 1}
         return self._id_cache[value]
 
-    def transform_Script(self, *commands):
+    def transform_Script(
+        self, *commands
+    ) -> List[Tuple[List[Real], Tuple[np.ndarray, np.ndarray]]]:
         common_box = [[float("-inf"), float("inf")] for _ in range(self.input_size)]
         common_polytope = []
         input_box_rows = set()
@@ -261,7 +263,7 @@ class CompatTransformer(AstNodeTransformer):
                 results[box_str] = [box, [polytope_arr]]
             else:
                 results[box_str][1].append(polytope_arr)
-        return list(results.values())
+        return list(map(tuple, results.values()))
 
 
 def read_vnnlib_simple(
