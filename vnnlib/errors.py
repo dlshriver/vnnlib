@@ -1,5 +1,13 @@
-class ParserError(Exception):
+class VnnLibError(Exception):
     pass
 
 
-__all__ = ["ParserError"]
+class TokenizerError(VnnLibError):
+    pass
+
+
+class ParserError(VnnLibError):
+    pass
+
+
+__all__ = ["ParserError", "TokenizerError", "VnnLibError"]

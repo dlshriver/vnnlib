@@ -44,6 +44,22 @@ def test_string_literal(tmp_path):
     assert result.commands[1].term.terms[1].value == "test"
 
 
+def test_string_literal_2(tmp_path):
+    vnnlib_path = tmp_path / "test.vnnlib"
+    with open(vnnlib_path, "w+") as f:
+        f.write('(declare-const X_0 Real)\n(assert (>= X_0 "test "" test"))\n')
+
+    result = parse_file(vnnlib_path)
+    assert isinstance(result, Script)
+    assert len(result.commands) == 2
+    assert isinstance(result.commands[0], DeclareConst)
+    assert isinstance(result.commands[1], Assert)
+    assert isinstance(result.commands[1].term, FunctionApplication)
+    assert len(result.commands[1].term.terms) == 2
+    assert isinstance(result.commands[1].term.terms[1], Constant)
+    assert result.commands[1].term.terms[1].value == 'test " test'
+
+
 def test_binary_literal(tmp_path):
     vnnlib_path = tmp_path / "test.vnnlib"
     with open(vnnlib_path, "w+") as f:
@@ -64,6 +80,38 @@ def test_hex_literal(tmp_path):
     vnnlib_path = tmp_path / "test.vnnlib"
     with open(vnnlib_path, "w+") as f:
         f.write("(declare-const X_0 Real)\n(assert (>= X_0 #xbeef))\n")
+
+    result = parse_file(vnnlib_path)
+    assert isinstance(result, Script)
+    assert len(result.commands) == 2
+    assert isinstance(result.commands[0], DeclareConst)
+    assert isinstance(result.commands[1], Assert)
+    assert isinstance(result.commands[1].term, FunctionApplication)
+    assert len(result.commands[1].term.terms) == 2
+    assert isinstance(result.commands[1].term.terms[1], Constant)
+    assert result.commands[1].term.terms[1].value == 0xBEEF
+
+
+def test_declared_symbol_with_initial_dash(tmp_path):
+    vnnlib_path = tmp_path / "test.vnnlib"
+    with open(vnnlib_path, "w+") as f:
+        f.write("(declare-const -test- Real)\n(assert (>= -test- #xbeef))\n")
+
+    result = parse_file(vnnlib_path)
+    assert isinstance(result, Script)
+    assert len(result.commands) == 2
+    assert isinstance(result.commands[0], DeclareConst)
+    assert isinstance(result.commands[1], Assert)
+    assert isinstance(result.commands[1].term, FunctionApplication)
+    assert len(result.commands[1].term.terms) == 2
+    assert isinstance(result.commands[1].term.terms[1], Constant)
+    assert result.commands[1].term.terms[1].value == 0xBEEF
+
+
+def test_negation_of_symbol(tmp_path):
+    vnnlib_path = tmp_path / "test.vnnlib"
+    with open(vnnlib_path, "w+") as f:
+        f.write("(declare-const X_0 Real)\n(assert (>= -X_0 #xbeef))\n")
 
     result = parse_file(vnnlib_path)
     assert isinstance(result, Script)
