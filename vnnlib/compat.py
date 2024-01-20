@@ -190,12 +190,12 @@ class CompatTransformer(AstNodeTransformer):
 
     def transform_Script(
         self, *commands
-    ) -> List[Tuple[List[Real], Tuple[np.ndarray, np.ndarray]]]:
+    ) -> List[Tuple[List[List[Real]], List[Tuple[np.ndarray, np.ndarray]]]]:
         common_box = [[float("-inf"), float("inf")] for _ in range(self.input_size)]
-        common_polytope = []
+        common_polytope: List[Tuple[List[float], List[float]]] = []
         input_box_rows = set()
         output_polytope_rows = set()
-        rhs = 0
+        rhs: Union[float, int] = 0
         for (row, var_type, index), value in sorted(
             self._assertions.items(), key=operator.itemgetter(0)
         ):
@@ -216,18 +216,20 @@ class CompatTransformer(AstNodeTransformer):
                 polytope_row = row - min(output_polytope_rows)
                 if len(common_polytope) <= polytope_row:
                     common_polytope.append(
-                        [[0 for _ in range(self.output_size)], [-rhs]]
+                        ([0 for _ in range(self.output_size)], [-rhs])
                     )
                     rhs = 0
                 common_polytope[polytope_row][0][index] = value
                 continue
             raise RuntimeError(f"unexpected variable type {var_type}")
-        results = {}
+        results: Dict[
+            str, Tuple[List[List[float]], List[Tuple[np.ndarray, np.ndarray]]]
+        ] = {}
         for disjunct in self._disjunctions:
             box = [interval.copy() for interval in common_box]
             polytope = [[lhs.copy(), rhs.copy()] for lhs, rhs in common_polytope]
             input_box_rows = set()
-            output_polytope_rows = {}
+            disjunct_output_polytope_rows: Dict[int, int] = {}
             rhs = 0
             for (row, var_type, index), value in sorted(
                 disjunct.items(), key=operator.itemgetter(0)
@@ -245,30 +247,32 @@ class CompatTransformer(AstNodeTransformer):
                     rhs = 0
                     continue
                 if var_type == 1:
-                    if row not in output_polytope_rows:
-                        output_polytope_rows[row] = len(output_polytope_rows)
-                    polytope_row = output_polytope_rows[row]
+                    if row not in disjunct_output_polytope_rows:
+                        disjunct_output_polytope_rows[row] = len(
+                            disjunct_output_polytope_rows
+                        )
+                    polytope_row = disjunct_output_polytope_rows[row]
                     if len(polytope) <= polytope_row:
                         polytope.append([[0 for _ in range(self.output_size)], [-rhs]])
                         rhs = 0
                     polytope[polytope_row][0][index] = value
                     continue
                 raise RuntimeError(f"unexpected variable type {var_type}")
-            box_str = str(box)
+            box_str = np.asarray(box).data.hex()
             polytope_arr = (
                 np.array([lhs for lhs, _ in polytope]),
                 np.array([rhs for _, rhs in polytope]),
             )
             if box_str not in results:
-                results[box_str] = [box, [polytope_arr]]
+                results[box_str] = (box, [polytope_arr])
             else:
                 results[box_str][1].append(polytope_arr)
-        return list(map(tuple, results.values()))
+        return list(results.values())
 
 
 def read_vnnlib_simple(
     vnnlib_filename: Union[str, pathlib.Path], num_inputs: int, num_outputs: int
-) -> List[Tuple[List[Real], Tuple[np.ndarray, np.ndarray]]]:
+) -> List[Tuple[List[List[Real]], List[Tuple[np.ndarray, np.ndarray]]]]:
     """process in a vnnlib file. You can get num_inputs and num_outputs using get_num_inputs_outputs().
 
     output a list containing 2-tuples:

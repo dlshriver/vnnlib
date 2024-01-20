@@ -1,68 +1,143 @@
 from __future__ import annotations
 
-import re
-from typing import Dict, Iterator, Set
+from typing import Final, Iterator, Tuple
 
-from .errors import ParserError
+from .errors import TokenizerError
 
+Token = Tuple[str, str]
 
-class Meta:
-    def __init__(self, start_pos: int, end_pos: int):
-        start_pos = start_pos
-        end_pos = end_pos
+DUMMY_TOKEN: Final[Token] = ("_", "")
+EOF: Final[Token] = ("EOF", "")
 
 
-class Token:
-    def __init__(self, token_type: str, value: str, meta: Meta):
-        self.token_type = token_type
-        self.value = value
-        self.meta = meta
+class Tokenizer:
+    def __init__(
+        self, text: str, strict=True, keep_comments=False, keep_whitespace=False
+    ):
+        self.text = text
+        self.strict = strict
+        self.keep_comments = keep_comments
+        self.keep_whitespace = keep_whitespace
+
+    def __iter__(self) -> Iterator[Token]:
+        if len(self.text) == 0:
+            yield EOF
+            return
+
+        whitespace = frozenset("\x09\x0a\x0d\x20")
+        digits = frozenset("0123456789")
+        hex_digits = frozenset("0123456789abcdefABCDEF")
+        bin_digits = frozenset("01")
+        letters = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        characters = frozenset("~!@$%^&*+=<>.?/_-")
+        letters_and_chars = letters | characters
+        letters_chars_and_digits = letters_and_chars | digits
+
+        character_stream = iter(self.text)
+        try:
+            completed_token = True
+            c = next(character_stream)
+            while c != "":
+                completed_token = True
+                if c in whitespace:
+                    c = next(character_stream)
+                elif c == "(":
+                    yield ("LPAREN", c)
+                    c = next(character_stream)
+                elif c == ")":
+                    yield ("RPAREN", c)
+                    c = next(character_stream)
+                elif c in letters_and_chars:
+                    completed_token = False
+                    symbol = []
+                    while c in letters_chars_and_digits:
+                        symbol.append(c)
+                        c = next(character_stream, "")
+                    yield ("SYMBOL", "".join(symbol))
+                elif c == ";":
+                    while c != "\n" and c != "\r":
+                        c = next(character_stream)
+                elif c in digits:
+                    completed_token = False
+                    number = []
+                    while c in digits:
+                        number.append(c)
+                        c = next(character_stream, "")
+                    if c not in {".", "e", "E"}:
+                        yield ("NUMERAL", "".join(number))
+                        continue
+                    elif c in {"e", "E"} and self.strict:
+                        raise TokenizerError(
+                            f"invalid decimal in strict mode: {''.join(number+[c])}"
+                        )
+                    number.append(c)
+                    c = next(character_stream)
+                    while c in digits:
+                        number.append(c)
+                        c = next(character_stream, "")
+                    if c not in {"e", "E", "+", "-"}:
+                        yield ("DECIMAL", "".join(number))
+                        continue
+                    elif self.strict:
+                        raise TokenizerError(
+                            f"invalid decimal in strict mode: {''.join(number+[c])}"
+                        )
+                    number.append(c)
+                    c = next(character_stream)
+                    if c in {"+", "-"}:
+                        number.append(c)
+                        c = next(character_stream)
+                    while c in digits:
+                        number.append(c)
+                        c = next(character_stream, "")
+                    yield ("DECIMAL", "".join(number))
+                elif c == "#":
+                    completed_token = False
+                    c = next(character_stream)
+                    if c == "x":
+                        c = next(character_stream)
+                        number = ["#x"]
+                        while c in hex_digits:
+                            number.append(c)
+                            c = next(character_stream, "")
+                        yield ("HEXADECIMAL", "".join(number))
+                    elif c == "b":
+                        c = next(character_stream)
+                        number = ["#b"]
+                        while c in bin_digits:
+                            number.append(c)
+                            c = next(character_stream, "")
+                        yield ("BINARY", "".join(number))
+                    else:
+                        raise TokenizerError(f"invalid number prefix: #{c}")
+                elif c == '"':
+                    completed_token = False
+                    string = []
+                    num_quotes = 1
+                    while c == '"' or num_quotes % 2 == 1:
+                        string.append(c)
+                        c = next(character_stream, "")
+                        if c == '"':
+                            num_quotes += 1
+                    yield ("STRING", "".join(string))
+                elif c == "|":
+                    completed_token = False
+                    symbol = []
+                    c = next(character_stream)
+                    while c != "|" and c != "\\":
+                        symbol.append(c)
+                        c = next(character_stream)
+                    yield ("SYMBOL", "".join(symbol))
+                    completed_token = True
+                    c = next(character_stream)
+                else:
+                    raise TokenizerError(f"unexpected character: {c}")
+            yield EOF
+        except StopIteration:
+            if not completed_token:
+                raise TokenizerError(f"unexpected end of file")
+            yield EOF
 
 
-DUMMY_TOKEN: Token = Token("_", "", Meta(0, 0))
-EOF: Token = Token("EOF", "", Meta(-1, -1))
-
-
-def tokenize(text: str, skip: Set[str], strict=True) -> Iterator[Token]:
-    if len(text) == 0:
-        return
-    _token_patterns: Dict[str, str] = {
-        "COMMENT": r";[\t -~]*(?:[\r\n]|$)",
-        "WS": r"\x09|\x0a|\x0d|\x20",
-        "LPAREN": r"\(",
-        "RPAREN": r"\)",
-        "BINARY": r"#b[01]+",
-        "HEXADECIMAL": r"#x[0-9A-Fa-f]+",
-        "_DECIMAL_strict": r"(?:{NUMERAL})\.0*(?:{NUMERAL})",
-        "_DECIMAL_extended": r"(?:(?:{NUMERAL})\.[0-9]+(?:[eE][+-]?[0-9]+)?)|(?:(?:{NUMERAL})[eE][+-]?[0-9]+)",
-        "DECIMAL": f"(?:{{_DECIMAL_{'strict' if strict else 'extended'}}})",
-        "NUMERAL": r"(?:(?:[1-9][0-9]*)|0)",
-        "STRING": r"\x22(?:(?:{WS})|(?:{_PRINTABLE_CHAR}))*\x22",
-        "SYMBOL": r"(?:(?:(?:{_LETTER})|(?:{_CHARACTER}))(?:[0-9]|(?:{_LETTER})|(?:{_CHARACTER}))*)|(?:\x7c(?:[\x20-\x5b]|[\x5d-\x7b]|[\x7d\x7e]|[\x80-\xff])*\x7c)",
-        "_PRINTABLE_CHAR": r"[\x20-\x7e]|[\x80-\xff]",
-        "_LETTER": r"[A-Za-z]",
-        "_CHARACTER": r"[~!@$%^&*+=<>.?/_-]",
-    }
-    for key, value in _token_patterns.items():
-        _token_patterns[key] = value.format(**_token_patterns)
-    token_pattern = re.compile(
-        "|".join(
-            f"(?P<{token_type}>{pattern})"
-            for token_type, pattern in _token_patterns.items()
-            if not token_type.startswith("_")
-        )
-    )
-    pos: int = 0
-    for match in token_pattern.finditer(text):
-        start_pos, end_pos = match.span()
-        token_type = match.lastgroup
-        if token_type in skip:
-            pos = end_pos
-            continue
-        if start_pos != pos:
-            raise ParserError(f"Unknown string: {text[pos:start_pos]!r}")
-        assert token_type is not None
-        yield Token(token_type, match.group(), Meta(start_pos, end_pos))
-        pos = end_pos
-    if pos != len(text):
-        raise ParserError(f"Unknown string: {text[pos:]!r}")
+def tokenize(text: str, strict=True) -> Iterator[Token]:
+    yield from Tokenizer(text, strict)

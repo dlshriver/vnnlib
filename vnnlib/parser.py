@@ -18,6 +18,8 @@ class AstNode:
 
 
 class Script(AstNode):
+    __slots__ = ("commands",)
+
     def __init__(self, *commands: Command):
         self.commands = commands
 
@@ -31,12 +33,16 @@ class Declare(Command):
 
 
 class DeclareConst(Declare):
+    __slots__ = "symbol", "sort"
+
     def __init__(self, symbol: str, sort: str):
         self.symbol = symbol
         self.sort = sort
 
 
 class Assert(Command):
+    __slots__ = ("term",)
+
     def __init__(self, term: Term):
         self.term = term
 
@@ -46,22 +52,30 @@ class Term(AstNode):
 
 
 class FunctionApplication(Term):
+    __slots__ = "function", "terms"
+
     def __init__(self, function: Identifier, *terms: Term):
         self.function = function
         self.terms = terms
 
 
 class Constant(Term):
+    __slots__ = ("value",)
+
     def __init__(self, value: float | int | str | Real):
         self.value = value
 
 
 class Sort(AstNode):
+    __slots__ = ("value",)
+
     def __init__(self, value: str):
         self.value = value
 
 
 class Identifier(Term):
+    __slots__ = ("value",)
+
     def __init__(self, value: str, sort: Sort):
         self.value = value
 
@@ -75,7 +89,7 @@ def _bin_to_int(x: str) -> int:
 
 
 def _string_to_str(x: str) -> str:
-    return x[1:-1]
+    return x[1:-1].replace('""', '"')
 
 
 LITERAL_CONVERTERS: Dict[str, Callable[[str], float | int | str | Real]] = {
@@ -117,31 +131,24 @@ class VnnLibParser:
         self.identifiers: Dict[str, Identifier] = CORE_IDS.copy()
 
     def advance_token_stream(self) -> Token:
-        self.curr_token = next_token = next(self.token_stream, EOF)
-        return next_token
+        self.curr_token = next(self.token_stream)
+        return self.curr_token
 
-    def expect_token_type(
+    def ensure_token_type(
         self,
-        token_type: str,
+        token: Token,
+        expected_token_type: str,
         *,
         expected_value: Optional[str] = None,
         msg: str = "Unexpected token: {token_type}({value!r})",
     ) -> bool:
-        if self.curr_token.token_type == token_type:
+        if token[0] == expected_token_type:
             return True
         if expected_value:
             raise ParserError(
-                f"Unexpected token: {self.curr_token.value!r}"
-                f", expected {expected_value!r}"
+                f"Unexpected token: {token[1]!r}" f", expected {expected_value!r}"
             )
-        curr_token = self.curr_token
-        raise ParserError(
-            msg.format(
-                token_type=curr_token.token_type,
-                value=curr_token.value,
-                meta=curr_token.meta,
-            )
-        )
+        raise ParserError(msg.format(token_type=token[0], value=token[1]))
 
     def lookup_identifier(self, identifier: str) -> Identifier:
         if identifier not in self.identifiers:
@@ -167,38 +174,36 @@ class VnnLibParser:
 
     @classmethod
     def parse(cls, text: str, strict=True) -> Script:
-        parser = VnnLibParser(tokenize(text, {"WS", "COMMENT"}, strict=strict))
+        parser = VnnLibParser(tokenize(text, strict=strict))
         parser.advance_token_stream()
         commands = []
         while parser.curr_token != EOF:
-            commands.append(parser.parse_command())
+            command = parser.parse_command()
+            commands.append(command)
         return Script(*commands)
 
     def parse_command(self) -> Command:
-        self.expect_token_type(token_type="LPAREN", expected_value="(")
+        self.ensure_token_type(self.curr_token, "LPAREN", expected_value="(")
         curr_token = self.advance_token_stream()
-        command = curr_token.value
-        command_parsers = {
-            "assert": self.parse_assert,
-            "declare-const": self.parse_declare_const,
-        }
-        if command not in command_parsers:
+        command = curr_token[1]
+        if command == "assert":
+            node: Command = self.parse_assert()
+        elif command == "declare-const":
+            node = self.parse_declare_const()
+        else:
             raise ParserError(f"Unknown command: {command!r}")
-        node = command_parsers[command]()
-        self.expect_token_type(token_type="RPAREN", expected_value=")")
+        self.ensure_token_type(self.curr_token, "RPAREN", expected_value=")")
         self.advance_token_stream()
         return node
 
     def parse_declare_const(self) -> Declare:
         symbol = self.advance_token_stream()
-        self.expect_token_type("SYMBOL")
+        self.ensure_token_type(symbol, "SYMBOL")
         sort = self.advance_token_stream()
-        self.expect_token_type("SYMBOL")
+        self.ensure_token_type(sort, "SYMBOL")
         self.advance_token_stream()
-        self.identifiers[symbol.value] = Identifier(
-            symbol.value, self.lookup_sort(sort.value)
-        )
-        return DeclareConst(symbol.value, sort.value)
+        self.identifiers[symbol[1]] = Identifier(symbol[1], self.lookup_sort(sort[1]))
+        return DeclareConst(symbol[1], sort[1])
 
     def parse_assert(self) -> Assert:
         self.advance_token_stream()
@@ -206,34 +211,36 @@ class VnnLibParser:
 
     def parse_term(self) -> Term:
         curr_token = self.curr_token
-        token_type = curr_token.token_type
+        token_type = curr_token[0]
         if token_type == "SYMBOL":
             self.advance_token_stream()
-            if curr_token.value.startswith("-"):
-                warnings.warn("literal negation does not strictly follow SMT-LIB")
-                try:
-                    float_value = Real(curr_token.value)
-                    return Constant(float_value)
-                except ValueError:
-                    return FunctionApplication(
-                        self.lookup_identifier("-"),
-                        self.lookup_identifier(curr_token.value[1:]),
-                    )
-            return self.lookup_identifier(curr_token.value)
+            try:
+                return self.lookup_identifier(curr_token[1])
+            except ParserError:
+                if curr_token[1].startswith("-"):
+                    warnings.warn("literal negation does not strictly follow SMT-LIB")
+                    try:
+                        float_value = Real(curr_token[1])
+                        return Constant(float_value)
+                    except ValueError:
+                        return FunctionApplication(
+                            self.lookup_identifier("-"),
+                            self.lookup_identifier(curr_token[1][1:]),
+                        )
+                raise
         if token_type == "LPAREN":
             children: List[Term] = []
             function_id_token = self.advance_token_stream()
-            self.expect_token_type("SYMBOL")
+            self.ensure_token_type(function_id_token, "SYMBOL")
             self.advance_token_stream()
-            children.append(self.parse_term())
-            while self.curr_token.token_type != "RPAREN":
-                children.append(self.parse_term())
+            while self.curr_token[0] != "RPAREN":
+                child = self.parse_term()
+                children.append(child)
             self.advance_token_stream()
-            return FunctionApplication(
-                self.lookup_identifier(function_id_token.value), *children
-            )
+            function = self.lookup_identifier(function_id_token[1])
+            return FunctionApplication(function, *children)
         if token_type in LITERAL_CONVERTERS:
-            value = LITERAL_CONVERTERS[token_type](curr_token.value)
+            value = LITERAL_CONVERTERS[token_type](curr_token[1])
             self.advance_token_stream()
             return Constant(value)
         raise ParserError(f"Unexpected token: {curr_token}")
@@ -255,6 +262,7 @@ def parse_file(filename: Union[str, Path], strict=True) -> AstNode:
     with open_func(filename) as f:
         text = f.read()
     ast_node = VnnLibParser.parse(text, strict=strict)
+
     return ast_node
 
 
