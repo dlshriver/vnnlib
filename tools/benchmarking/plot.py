@@ -78,6 +78,30 @@ def main(args: list[str] | None = None):
     ax.figure.savefig(output_dir / "speedup_box.png", bbox_inches="tight")
     ax.figure.clear()
 
+    num_bins = 10
+    time_bins = np.logspace(
+        np.log10(results_df["time_old"].min() - 1e-6),
+        np.log10(results_df["time_old"].max() + 1e-6),
+        num_bins + 1,
+    )
+    results_df["time_old_binned_log"] = pd.cut(results_df["time_old"], time_bins)
+    _df = results_df.pivot(columns="time_old_binned_log", values="speedup")
+    sorted_columns = sorted(_df.columns, key=lambda c: c.left)
+    _df = _df.reindex(sorted_columns, axis=1)
+    ax: matplotlib.axes.Axes = _df.boxplot(figsize=(10, 8))
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=22)
+    twinx_ax = ax.twinx()
+    twinx_ax.bar(
+        x=ax.get_xticks(),
+        height=results_df["time_old_binned_log"].value_counts(sort=False)[
+            sorted_columns
+        ],
+        alpha=0.2,
+    )
+    twinx_ax.grid(False)
+    ax.figure.savefig(output_dir / "speedup_box_logx.png", bbox_inches="tight")
+    ax.figure.clear()
+
 
 if __name__ == "__main__":
     main()
