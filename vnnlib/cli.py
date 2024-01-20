@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import pickle
+import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -19,12 +20,26 @@ def parse_args(args: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--compat", action="store_true", help="Use the VNN-COMP-1 output format"
     )
-    parser.add_argument(
-        "--strict",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Whether or not to strictly follow VNN-LIB (default: True)",
-    )
+    if sys.version_info >= (3, 9, 0):
+        parser.add_argument(
+            "--strict",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Whether or not to strictly follow VNN-LIB (default: True)",
+        )
+    else:
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            default=True,
+            help="Whether or not to strictly follow VNN-LIB (default: True)",
+        )
+        parser.add_argument(
+            "--no-strict",
+            action="store_false",
+            help="Whether or not to strictly follow VNN-LIB",
+            dest="strict",
+        )
     parser.add_argument(
         "-o", "--output", type=str, help="The path to save the compiled output"
     )
@@ -35,6 +50,7 @@ def main(args: Optional[Sequence[str]] = None) -> None:
     parsed_args = parse_args(args)
     file: Path = parsed_args.file
     print(f"parsing file: {parsed_args.file}")
+    print(parsed_args)
 
     if parsed_args.compat:
         if ".vnnlib" in file.suffixes:
