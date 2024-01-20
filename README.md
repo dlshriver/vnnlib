@@ -9,11 +9,10 @@ A python package for parsing neural network properties in the [VNN-LIB format](h
 It should currently parse a superset of the VNN-LIB spec that was supported by the [example parser](https://github.com/stanleybak/nnenum/blob/master/src/nnenum/vnnlib.py) written by Stan Bak for [VNN-COMP](https://sites.google.com/view/vnn2023), and will produce compiled specs in the same format.
 Additionally, we allow parsing of gzip, bzip2, and lzma compressed specs.
 
-> Our parser is currently slower for large files than the previous scripts due to the increased specification support. 
+> Our parser is currently slower for some large files than the previous scripts due to the increased specification support. 
 > However, we expect significant optimization opportunities are available, and that overhead will decrease over time.
 
-> This package is still alpha software and APIs other than the compatibility API may change before the first release. 
-> We hope to have a stable release out before or during the benchmark proposal phase of VNN-COMP 2023.
+> This package is still alpha software and APIs other than the compatibility API may change before the first release.
 
 
 ## Installation
@@ -23,9 +22,6 @@ For the latest stable version, you can install from PyPI with:
 ```console
 pip install vnnlib
 ```
-
-> PyPI currently only has pre-releases of `vnnlib`. 
-> To install a pre-release version, add the `--pre` option to the above command.
 
 For the latest updates of `vnnlib`, you can pip install directly from the GitHub repo with:
 
