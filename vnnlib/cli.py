@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .__version__ import __version__
 from .compat import CompatTransformer
 from .errors import VnnLibError
 from .parser import parse_file
@@ -16,6 +17,8 @@ def parse_args(args: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "vnnlib",
         description="",
     )
+    parser.add_argument("-V", "--version", action="version", version=__version__)
+
     parser.add_argument("file", type=Path)
     parser.add_argument(
         "--compat", action="store_true", help="Use the VNN-COMP-1 output format"
