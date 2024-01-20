@@ -4,7 +4,6 @@ from typing import Final, Iterator, Tuple
 
 from .errors import TokenizerError
 
-
 Token = Tuple[str, str]
 
 DUMMY_TOKEN: Final[Token] = ("_", "")
