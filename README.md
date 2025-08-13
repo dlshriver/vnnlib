@@ -17,12 +17,6 @@ Additionally, we allow parsing of gzip, bzip2, and lzma compressed specs.
 
 ## Installation
 
-For the latest stable version, you can install from PyPI with:
-
-```console
-pip install vnnlib
-```
-
 For the latest updates of `vnnlib`, you can pip install directly from the GitHub repo with:
 
 ```console
