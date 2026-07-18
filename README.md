@@ -1,7 +1,6 @@
 # vnnlib
 
-[![PyPI - Version](https://img.shields.io/pypi/v/vnnlib.svg)](https://pypi.org/project/vnnlib)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/vnnlib.svg)](https://pypi.org/project/vnnlib)
+> This project is no longer maintained and does not support the latest versions of VNN-LIB. We recommend [VNNLIB-Python](https://github.com/VNNLIB/VNNLIB-Python), which can be installed with `pip install vnnlib`.
 
 -----
 
